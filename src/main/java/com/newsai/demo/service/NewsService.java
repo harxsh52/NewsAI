@@ -26,60 +26,61 @@ public class NewsService {
 
     public List<NewsArticle> getTechNews() {
 
-        String url = "https://newsapi.org/v2/everything?q=AI OR artificial intelligence OR machine learning OR startups OR tech&language=en&sortBy=publishedAt&pageSize=10&apiKey=" + API_KEY;
+        String url = "https://newsapi.org/v2/everything?q=AI OR artificial intelligence OR machine learning OR startups OR tech" +
+                "&language=en&sortBy=publishedAt&pageSize=10&apiKey=" + API_KEY;
 
         List<NewsArticle> result = new ArrayList<>();
 
         try {
             String response = restTemplate.getForObject(url, String.class);
-
             if (response == null) return result;
 
             JsonNode root = mapper.readTree(response);
-            JsonNode articles = root.get("articles");
+            JsonNode articles = root.path("articles");
 
-            if (articles == null || !articles.isArray()) return result;
+            if (!articles.isArray()) return result;
 
             for (JsonNode article : articles) {
 
-                // 🔥 limit AI calls (cost + latency control)
-                if (result.size() >= 5) break;
+                // 🔥 reduce load (important)
+                if (result.size() >= 2) break;
 
-                // skip invalid title
-                if (article.get("title") == null || article.get("title").isNull()) continue;
+                String title = article.path("title").asText(null);
+                if (title == null || title.isBlank()) continue;
 
-                String title = article.get("title").asText();
+                String description = article.path("description").asText(null);
+                if (description == null || description.isBlank() || description.length() < 50) continue;
 
-                // safe description
-                String description = (article.get("description") != null && !article.get("description").isNull())
-                        ? article.get("description").asText()
-                        : null;
+                // 🔥 filter non-tech content
+                String lower = (title + " " + description).toLowerCase();
+                if (!(lower.contains("ai") ||
+                        lower.contains("artificial intelligence") ||
+                        lower.contains("machine learning") ||
+                        lower.contains("tech"))) {
+                    continue;
+                }
 
-                if (description == null || description.isBlank()) continue;
-
-                String urlLink = (article.get("url") != null && !article.get("url").isNull())
-                        ? article.get("url").asText()
-                        : "";
+                String urlLink = article.path("url").asText("");
 
                 NewsArticle news = new NewsArticle();
                 news.setTitle(title);
                 news.setDescription(description);
                 news.setUrl(urlLink);
 
-                // 🔥 AI enrichment
-                try {
-                    Map<String, String> ai = geminiService.getSummary(description);
+                // 🔥 AI with retry
+                Map<String, String> aiResult = callAiWithRetry(description);
 
-                    news.setSummary(ai.getOrDefault("summary", "AI unavailable"));
-                    news.setWhyItMatters(ai.getOrDefault("whyItMatters", "Try again later"));
-
-                } catch (Exception e) {
-                    System.out.println("AI error: " + e.getMessage());
-                    news.setSummary("AI unavailable");
-                    news.setWhyItMatters("Try again later");
-                }
+                news.setSummary(aiResult.getOrDefault("summary", "AI unavailable"));
+                news.setWhyItMatters(aiResult.getOrDefault("whyItMatters", "Try again later"));
 
                 result.add(news);
+
+                // 🔥 small delay (avoid rate limit)
+                try {
+                    Thread.sleep(400);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                }
             }
 
         } catch (Exception e) {
@@ -87,5 +88,24 @@ public class NewsService {
         }
 
         return result;
+    }
+
+    // 🔥 helper method
+    private Map<String, String> callAiWithRetry(String description) {
+
+        try {
+            return geminiService.getSummary(description);
+        } catch (Exception e) {
+
+            try {
+                Thread.sleep(400);
+                return geminiService.getSummary(description);
+            } catch (Exception ex) {
+                return Map.of(
+                        "summary", "AI temporarily unavailable",
+                        "whyItMatters", "Try again later"
+                );
+            }
+        }
     }
 }
