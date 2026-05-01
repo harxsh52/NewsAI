@@ -6,7 +6,7 @@ import org.springframework.web.client.RestTemplate;
 @Service
 public class NewsService {
 
-    private final String API_KEY = "d3869fed1ee249bc975d21cad454267b";
+    private final String API_KEY = "";
 
     public String getTechNews() {
         String url = "https://newsapi.org/v2/top-headlines?category=technology&language=en&apiKey=" + API_KEY;
